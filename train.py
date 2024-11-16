@@ -437,7 +437,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     return t_list, visible_count_list
 
 
-def render_sets(args_param, dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train=True, skip_test=False, wandb=None, tb_writer=None, dataset_name=None, logger=None, x_bound_min=None, x_bound_max=None):
+def render_sets(args_param, dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train=False, skip_test=False, wandb=None, tb_writer=None, dataset_name=None, logger=None, x_bound_min=None, x_bound_max=None):
     with torch.no_grad():
         gaussians = GaussianModel(
             dataset.feat_dim,
@@ -462,7 +462,7 @@ def render_sets(args_param, dataset : ModelParams, iteration : int, pipeline : P
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         if not skip_train:
-            t_train_list, _  = render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
+            t_train_list, visible_count = render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
             train_fps = 1.0 / torch.tensor(t_train_list[5:]).mean()
             logger.info(f'Train FPS: \033[1;35m{train_fps.item():.5f}\033[0m')
             if wandb is not None:
@@ -493,7 +493,7 @@ def readImages(renders_dir, gt_dir):
     return renders, gts, image_names
 
 
-def evaluate(model_paths, visible_count=None, wandb=None, tb_writer=None, dataset_name=None, logger=None):
+def evaluate(model_paths, visible_count=None, wandb=None, tb_writer=None, dataset_name=None, logger=None, eval_dir="test"):
 
     full_dict = {}
     per_view_dict = {}
@@ -507,7 +507,7 @@ def evaluate(model_paths, visible_count=None, wandb=None, tb_writer=None, datase
     full_dict_polytopeonly[scene_dir] = {}
     per_view_dict_polytopeonly[scene_dir] = {}
 
-    test_dir = Path(scene_dir) / "test"
+    test_dir = Path(scene_dir) / eval_dir
 
     for method in os.listdir(test_dir):
 
@@ -604,16 +604,23 @@ if __name__ == "__main__":
     parser.add_argument("--log2_2D", type=int, default = 15)
     parser.add_argument("--n_features", type=int, default = 4)
     parser.add_argument("--lmbda", type=float, default = 0.001)
+    parser.add_argument("--skip_test", action='store_true', default=False)
+    parser.add_argument("--eval_dir", type=str, default = 'test')
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
 
     # enable logging
 
-    model_path = args.model_path
-    os.makedirs(model_path, exist_ok=True)
+    if not args.model_path:
+        if os.getenv('OAR_JOB_ID'):
+            unique_str=os.getenv('OAR_JOB_ID')
+        else:
+            unique_str = str(uuid.uuid4())
+        args.model_path = os.path.join("./output/", unique_str[0:10])
+    os.makedirs(args.model_path, exist_ok=True)
 
-    logger = get_logger(model_path)
+    logger = get_logger(args.model_path)
 
 
     logger.info(f'args: {args}')
@@ -666,10 +673,11 @@ if __name__ == "__main__":
 
     # rendering
     logger.info(f'\nStarting Rendering~')
-    visible_count = render_sets(args, lp.extract(args), -1, pp.extract(args), wandb=wandb, logger=logger, x_bound_min=x_bound_min, x_bound_max=x_bound_max)
+    visible_count = render_sets(args, lp.extract(args), -1, pp.extract(args), skip_test=args.skip_test, 
+                    wandb=wandb, logger=logger, x_bound_min=x_bound_min, x_bound_max=x_bound_max)
     logger.info("\nRendering complete.")
 
     # calc metrics
     logger.info("\n Starting evaluation...")
-    evaluate(args.model_path, visible_count=visible_count, wandb=wandb, logger=logger)
+    evaluate(args.model_path, visible_count=visible_count, wandb=wandb, logger=logger, eval_dir=args.eval_dir)
     logger.info("\nEvaluating complete.")
