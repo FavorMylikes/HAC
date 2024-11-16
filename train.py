@@ -609,7 +609,13 @@ if __name__ == "__main__":
 
 
     # enable logging
-
+    # Make it have the same output structure as the original gaussian splatting.
+    if not args.model_path:
+        if os.getenv('OAR_JOB_ID'):
+            unique_str=os.getenv('OAR_JOB_ID')
+        else:
+            unique_str = str(uuid.uuid4())
+        args.model_path = os.path.join("./output/", unique_str[0:10])
     model_path = args.model_path
     os.makedirs(model_path, exist_ok=True)
 
